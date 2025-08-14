@@ -246,7 +246,7 @@ def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
 
 def main():
     """Main function to run the Streamlit app."""
-    st.title("📄 Table Extractor using Gemini Pro")
+    st.title("📄 Table Extractor using Gemini 2.5 Pro API")
     st.markdown("An AI agent that performs a forensic analysis of documents to extract tables.")
 
     # --- Initialize Session State ---
@@ -412,3 +412,4 @@ def display_results():
 
 if __name__ == "__main__":
     main()
+
