@@ -3,6 +3,7 @@ import sys
 import logging
 import json
 import re
+import io  # <-- Required for the fix
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 
@@ -40,7 +41,7 @@ class TableProcessorConfig:
     """Configuration for the advanced table processing agent."""
     # This assumes you have a secrets.toml file with your GOOGLE_API_KEY
     GOOGLE_API_KEY: str = st.secrets.get("GOOGLE_API_KEY", "")
-    GEMINI_MODEL: str = "gemini-2.5-pro" # Using the latest recommended model
+    GEMINI_MODEL: str = "gemini-2.5-pro"
     OUTPUT_DIR: str = "extracted_tables"
 
 class SingleShotTableProcessor:
@@ -201,20 +202,27 @@ class SingleShotTableProcessor:
             return None
 
 # --- Helper Functions & UI ---
+
+# --- ❗ FULLY CORRECTED AND IMPROVED FUNCTION ❗ ---
 def convert_pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
     """
-    Converts each page of a PDF file into a PIL Image object.
+    Converts each page of a PDF file into a high-quality PIL Image object.
+    This method is robust against rendering artifacts by creating a PNG first.
     """
+    images = []
     try:
         pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
-        # --- ❗ FIX WAS APPLIED HERE ❗ ---
-        # The 'Page' object from fitz does not have a direct '.width' or '.height'.
-        # You must access the page's rectangle '.rect' first.
-        # It's also good practice to convert the dimensions to integers.
-        return [
-            Image.frombytes("RGB", [int(p.rect.width), int(p.rect.height)], p.get_pixmap().samples)
-            for p in pdf_document
-        ]
+        for page in pdf_document:
+            # Render page to a pixmap at a higher resolution (200 DPI) for better quality
+            pix = page.get_pixmap(dpi=200)
+            
+            # Convert the pixmap to PNG image bytes
+            img_bytes = pix.tobytes("png")
+            
+            # Create a PIL Image from the bytes using the io module
+            pil_image = Image.open(io.BytesIO(img_bytes))
+            images.append(pil_image)
+        return images
     except Exception as e:
         st.error(f"Failed to convert PDF: {e}")
         logging.error(f"PyMuPDF conversion failed: {e}")
@@ -404,4 +412,3 @@ def display_results():
 
 if __name__ == "__main__":
     main()
-
