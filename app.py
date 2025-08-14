@@ -222,7 +222,7 @@ def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
 
 def main():
     st.title("📄 Intelligent Table Extractor Pro")
-    st.markdown("A self-correcting AI agent that performs a forensic analysis of your documents to extract flawless tables.")
+    st.markdown("A self-correcting AI agent that performs a forensic analysis of your documents to extract tables.")
 
     if "processor" not in st.session_state:
         st.session_state.processor = SingleShotTableProcessor()
@@ -305,4 +305,5 @@ def main():
         st.success(f"**Analysis complete! Found a total of {total_tables_found} tables.**")
 
 if __name__ == "__main__":
+
     main()
