@@ -38,8 +38,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 @dataclass
 class TableProcessorConfig:
     """Configuration for the advanced table processing agent."""
-    GOOGLE_API_KEY: str = "AIzaSyBuLjspfJ_u1xibj38a4iq1h1KnFI7BIJE"
-    GEMINI_MODEL: str = "gemini-1.5-pro-latest"
+    GOOGLE_API_KEY: str = st.secrets["GOOGLE_API_KEY"]
+    GEMINI_MODEL: str = "gemini-2.5-pro"
     OUTPUT_DIR: str = "bonus/extracted_tables"
 
 class SingleShotTableProcessor:
@@ -369,3 +369,4 @@ def display_results():
 
 if __name__ == "__main__":
     main()
+
