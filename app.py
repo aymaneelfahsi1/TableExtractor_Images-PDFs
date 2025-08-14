@@ -38,9 +38,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 @dataclass
 class TableProcessorConfig:
     """Configuration for the advanced table processing agent."""
-    GOOGLE_API_KEY: str = st.secrets["GOOGLE_API_KEY"]
-    GEMINI_MODEL: str = "gemini-2.5-pro"
-    OUTPUT_DIR: str = "bonus/extracted_tables"
+    # This assumes you have a secrets.toml file with your GOOGLE_API_KEY
+    GOOGLE_API_KEY: str = st.secrets.get("GOOGLE_API_KEY", "")
+    GEMINI_MODEL: str = "gemini-1.5-pro-latest" # Using the latest recommended model
+    OUTPUT_DIR: str = "extracted_tables"
 
 class SingleShotTableProcessor:
     """
@@ -49,6 +50,9 @@ class SingleShotTableProcessor:
     """
     def __init__(self):
         self.config = TableProcessorConfig()
+        if not self.config.GOOGLE_API_KEY:
+            st.error("Your GOOGLE_API_KEY is not set! Please add it to your Streamlit secrets.")
+            st.stop()
         self._initialize_gemini()
         os.makedirs(self.config.OUTPUT_DIR, exist_ok=True)
 
@@ -58,12 +62,12 @@ class SingleShotTableProcessor:
             self.model = genai.GenerativeModel(self.config.GEMINI_MODEL)
             logging.info("Gemini initialized successfully.")
         except Exception as e:
-            st.error(f"Failed to initialize Gemini. The hardcoded API key may be invalid. Error: {e}")
+            st.error(f"Failed to initialize Gemini. The API key may be invalid. Error: {e}")
             raise
 
     def extract_all_tables_in_one_shot(self, img: Image.Image, table_hint: int) -> List[Dict]:
         """
-        Processes an entire image using the final "Semantic Analyst" prompt.
+        Processes an entire image using a robust, single-shot prompt.
         """
         try:
             master_prompt = f"""
@@ -109,6 +113,7 @@ class SingleShotTableProcessor:
             return all_tables_instructions
         except Exception as e:
             st.error(f"An error occurred during the Gemini analysis process: {e}")
+            logging.error(f"Gemini analysis error. Response text was: {response.text if 'response' in locals() else 'N/A'}")
             return []
 
     def create_excel_file(self, instructions: Dict, output_path: str, table_num: int) -> Optional[str]:
@@ -165,7 +170,7 @@ class SingleShotTableProcessor:
 
             summary_row_data = instructions.get("summary_row", [])
             if summary_row_data:
-                 for c_idx, cell_data in enumerate(summary_row_data, 1):
+                for c_idx, cell_data in enumerate(summary_row_data, 1):
                     cell = ws.cell(row=current_row, column=c_idx)
                     cell.value = cell_data
                     cell.border, cell.font = cell_border, header_font
@@ -183,9 +188,12 @@ class SingleShotTableProcessor:
                     logging.warning(f"Skipping malformed formula instruction: {instruction}")
             
             for i in range(1, len(flat_headers) + 1):
-                max_len = max(len(str(cell.value or "")) for cell in ws[get_column_letter(i)])
-                ws.column_dimensions[get_column_letter(i)].width = min(max_len + 2, 50)
-                
+                try:
+                    max_len = max(len(str(cell.value or "")) for cell in ws[get_column_letter(i)])
+                    ws.column_dimensions[get_column_letter(i)].width = min(max_len + 2, 50)
+                except ValueError: # Handle empty columns
+                    continue
+                    
             wb.save(output_path)
             return output_path
         except Exception as e:
@@ -193,15 +201,29 @@ class SingleShotTableProcessor:
             return None
 
 # --- Helper Functions & UI ---
-def convert_pdf_to_images(pdf_bytes):
+def convert_pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
+    """
+    Converts each page of a PDF file into a PIL Image object.
+    """
     try:
         pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
-        return [Image.frombytes("RGB", [p.width, p.height], p.get_pixmap().samples) for p in pdf_document]
+        # --- ❗ FIX WAS APPLIED HERE ❗ ---
+        # The 'Page' object from fitz does not have a direct '.width' or '.height'.
+        # You must access the page's rectangle '.rect' first.
+        # It's also good practice to convert the dimensions to integers.
+        return [
+            Image.frombytes("RGB", [int(p.rect.width), int(p.rect.height)], p.get_pixmap().samples)
+            for p in pdf_document
+        ]
     except Exception as e:
         st.error(f"Failed to convert PDF: {e}")
+        logging.error(f"PyMuPDF conversion failed: {e}")
         return []
 
 def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
+    """
+    Converts the nested header structure from JSON into a single flat list for pandas.
+    """
     flat_headers = []
     for header in column_structure:
         parent_name = header.get("name", "")
@@ -209,13 +231,14 @@ def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
         if subheaders and isinstance(subheaders, list) and len(subheaders) > 0:
             for sub in subheaders:
                 sub_name = sub.get("name", "")
-                flat_headers.append(f"{parent_name}_{sub_name}")
+                flat_headers.append(f"{parent_name}_{sub_name}" if parent_name else sub_name)
         else:
             flat_headers.append(parent_name)
     return flat_headers
 
 def main():
-    st.title("📄 Table Extractor using Gemini 2.5 Pro API")
+    """Main function to run the Streamlit app."""
+    st.title("📄 Table Extractor using Gemini Pro")
     st.markdown("An AI agent that performs a forensic analysis of documents to extract tables.")
 
     # --- Initialize Session State ---
@@ -223,7 +246,7 @@ def main():
         try:
             st.session_state.processor = SingleShotTableProcessor()
         except Exception as e:
-            st.error("Failed to initialize the AI Processor. Is your API key set correctly in the code?")
+            st.error("Failed to initialize the AI Processor. Is your API key set correctly in Streamlit secrets?")
             st.stop()
     if "results" not in st.session_state:
         st.session_state.results = None
@@ -235,7 +258,7 @@ def main():
     # --- Sidebar for Configuration ---
     with st.sidebar:
         st.header("⚙️ Configuration")
-        st.info("API key is hardcoded.")
+        st.info("API Key is managed via Streamlit Secrets.")
         st.markdown("---")
         
         uploaded_file = st.file_uploader("Upload a new Image or PDF to start", type=["jpg", "jpeg", "png", "pdf"])
@@ -243,19 +266,22 @@ def main():
         # --- DYNAMIC UI FOR PDF PAGE SELECTION ---
         selected_pages_indices = []
         if uploaded_file and uploaded_file.type == "application/pdf":
-            with st.spinner("Reading PDF..."):
-                pdf_bytes = uploaded_file.getvalue()
-                pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                page_options = [f"Page {i+1}" for i in range(len(pdf_doc))]
+            try:
+                with st.spinner("Reading PDF..."):
+                    pdf_bytes = uploaded_file.getvalue()
+                    pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                    page_options = [f"Page {i+1}" for i in range(len(pdf_doc))]
             
-            selected_pages_str = st.multiselect(
-                "Select pages to process",
-                options=page_options,
-                default=page_options[0] if page_options else None
-            )
-            selected_pages_indices = [int(p.split(" ")[1]) - 1 for p in selected_pages_str]
+                selected_pages_str = st.multiselect(
+                    "Select pages to process",
+                    options=page_options,
+                    default=page_options[0] if page_options else None
+                )
+                selected_pages_indices = [int(p.split(" ")[1]) - 1 for p in selected_pages_str]
+            except Exception as e:
+                st.error(f"Could not read the PDF file. It might be corrupted. Error: {e}")
+                st.stop()
 
-        # General hint slider, now used as a default
         global_table_hint = st.slider("Default Table Hint (per page)", 1, 10, 1, 1, help="This will be the default hint for all selected pages.")
         
         if st.sidebar.button("Clear Results", use_container_width=True):
@@ -263,61 +289,61 @@ def main():
             st.rerun()
 
     # --- MAIN CONTENT AREA ---
-    # Step 1: Per-Page Configuration
-    if uploaded_file and uploaded_file.type == "application/pdf" and selected_pages_indices:
-        st.subheader("⚙️ Per-Page Configuration")
-        st.markdown("Set a specific table hint for each page you selected.")
-        
-        # Create a dictionary to hold the hints
-        page_configs = {}
-        for page_index in selected_pages_indices:
-            # Use columns for a cleaner layout
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.markdown(f"**Page {page_index + 1}**")
-            with col2:
-                # Use the global hint as the default value for each slider
-                hint = st.number_input(
-                    f"Table hint for page {page_index+1}",
-                    min_value=1,
-                    max_value=10,
-                    value=st.session_state.page_configs.get(page_index, global_table_hint),
-                    step=1,
-                    key=f"hint_{page_index}"
-                )
-                page_configs[page_index] = hint
-        
-        st.session_state.page_configs = page_configs
-        
-        if st.button("🚀 Start Analysis on Selected Pages", use_container_width=True):
-            process_file(uploaded_file, selected_pages_indices)
+    if uploaded_file:
+        if uploaded_file.type == "application/pdf":
+            if selected_pages_indices:
+                st.subheader("⚙️ Per-Page Configuration")
+                st.markdown("Set a specific table hint for each page you selected.")
+                page_configs = {}
+                for page_index in selected_pages_indices:
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        st.markdown(f"**Page {page_index + 1}**")
+                    with col2:
+                        hint = st.number_input(
+                            f"Table hint for page {page_index+1}",
+                            min_value=1, max_value=10,
+                            value=st.session_state.page_configs.get(page_index, global_table_hint),
+                            step=1, key=f"hint_{page_index}"
+                        )
+                        page_configs[page_index] = hint
+                st.session_state.page_configs = page_configs
+                
+                if st.button("🚀 Start Analysis on Selected Pages", use_container_width=True, type="primary"):
+                    process_file(uploaded_file, selected_pages_indices)
+        else: # Handle Image files
+            st.session_state.page_configs = {0: global_table_hint} # For single image, page index is 0
+            if st.button("🚀 Start Analysis", use_container_width=True, type="primary"):
+                process_file(uploaded_file, [0]) # Process page at index 0
 
-    elif uploaded_file and uploaded_file.type != "application/pdf":
-         st.session_state.page_configs = {0: global_table_hint} # For single image, page index is 0
-         if st.button("🚀 Start Analysis", use_container_width=True):
-             process_file(uploaded_file, [0]) # Process page at index 0
-
-    # Step 2: Display Results
     if st.session_state.results:
         display_results()
 
-def process_file(uploaded_file, selected_pages_indices):
+def process_file(uploaded_file, selected_pages_indices: List[int]):
     """Handles the main processing logic when the button is clicked."""
     st.session_state.results, st.session_state.images_to_display = None, None
-    all_images = convert_pdf_to_images(uploaded_file.getvalue()) if uploaded_file.type == "application/pdf" else [Image.open(uploaded_file)]
     
-    if all_images:
-        images_to_process = [(idx, all_images[idx]) for idx in selected_pages_indices if idx < len(all_images)]
-        st.session_state.images_to_display = images_to_process
+    with st.spinner("Preparing document..."):
+        file_bytes = uploaded_file.getvalue()
+        all_images = convert_pdf_to_images(file_bytes) if uploaded_file.type == "application/pdf" else [Image.open(uploaded_file)]
     
-        results_by_page = {}
+    if not all_images:
+        st.error("Could not extract any images from the uploaded file.")
+        return
+
+    images_to_process = [(idx, all_images[idx]) for idx in selected_pages_indices if idx < len(all_images)]
+    st.session_state.images_to_display = images_to_process
+    
+    results_by_page = {}
+    with st.spinner("AI is analyzing... This may take a moment."):
         for page_index, img in images_to_process:
-            page_hint = st.session_state.page_configs.get(page_index, 1) # Get the specific hint for this page
-            with st.spinner(f"AI is analyzing Page {page_index + 1} with a hint of {page_hint} table(s)..."):
-                instructions = st.session_state.processor.extract_all_tables_in_one_shot(img, page_hint)
-                results_by_page[page_index] = instructions
-        st.session_state.results = results_by_page
-        st.rerun()
+            page_hint = st.session_state.page_configs.get(page_index, 1)
+            st.write(f"Analyzing Page {page_index + 1} with a hint of {page_hint} table(s)...")
+            instructions = st.session_state.processor.extract_all_tables_in_one_shot(img, page_hint)
+            results_by_page[page_index] = instructions
+    
+    st.session_state.results = results_by_page
+    st.rerun()
 
 def display_results():
     """Renders the results stored in the session state."""
@@ -329,45 +355,52 @@ def display_results():
         page_num = page_index + 1
         page_results = st.session_state.results.get(page_index)
 
-        st.subheader(f"📄 Page {page_num}")
-        col1, col2 = st.columns([1, 2])
-        col1.image(img, caption=f"Analyzed Page {page_num}", use_column_width=True)
+        with st.container(border=True):
+            st.subheader(f"📄 Page {page_num}")
+            col1, col2 = st.columns([1, 2])
+            col1.image(img, caption=f"Analyzed Page {page_num}", use_column_width=True)
 
-        with col2:
-            if not page_results:
-                st.warning(f"No tables were found on Page {page_num}.")
-                continue
+            with col2:
+                if not page_results:
+                    st.warning(f"No tables were found on Page {page_num}.")
+                    continue
 
-            for j, table_instructions in enumerate(page_results):
-                total_tables_found += 1
-                title = table_instructions.get("table_title") or f"Table {j + 1}"
-                st.markdown(f"#### {title}")
-                
-                column_structure = table_instructions.get("column_structure", [])
-                data_rows = table_instructions.get("data_rows", [])
-                summary_row = table_instructions.get("summary_row", [])
-                flat_headers = flatten_hierarchical_headers(column_structure)
+                for j, table_instructions in enumerate(page_results):
+                    total_tables_found += 1
+                    title = table_instructions.get("table_title") or f"Table {j + 1} on Page {page_num}"
+                    with st.expander(f"**{title}**", expanded=True):
+                        
+                        column_structure = table_instructions.get("column_structure", [])
+                        data_rows = table_instructions.get("data_rows", [])
+                        summary_row = table_instructions.get("summary_row", [])
+                        flat_headers = flatten_hierarchical_headers(column_structure)
 
-                if flat_headers and (data_rows or summary_row):
-                    try:
-                        preview_data = data_rows + ([summary_row] if summary_row else [])
-                        df = pd.DataFrame(preview_data, columns=flat_headers)
-                        st.dataframe(df)
-                    except Exception as e:
-                        st.error(f"Could not display preview: {e}")
-                        st.json(table_instructions)
+                        if flat_headers and (data_rows or summary_row):
+                            try:
+                                preview_data = data_rows + ([summary_row] if summary_row else [])
+                                df = pd.DataFrame(preview_data, columns=flat_headers)
+                                st.dataframe(df)
+                            except Exception as e:
+                                st.error(f"Could not display preview for '{title}': {e}")
+                                st.json(table_instructions)
 
-                output_filename = f"Page_{page_num}_Table_{j + 1}.xlsx"
-                output_path = os.path.join(st.session_state.processor.config.OUTPUT_DIR, output_filename)
-                saved_path = st.session_state.processor.create_excel_file(table_instructions, output_path, total_tables_found)
+                        output_filename = f"Page_{page_num}_Table_{j + 1}.xlsx"
+                        output_path = os.path.join(st.session_state.processor.config.OUTPUT_DIR, output_filename)
+                        saved_path = st.session_state.processor.create_excel_file(table_instructions, output_path, total_tables_found)
 
-                if saved_path:
-                    with open(saved_path, "rb") as file:
-                        st.download_button(f"📥 Download {output_filename}", file, output_filename, key=f"dl_{page_num}_{j}")
+                        if saved_path:
+                            with open(saved_path, "rb") as file:
+                                st.download_button(
+                                    f"📥 Download {output_filename}",
+                                    file,
+                                    output_filename,
+                                    key=f"dl_{page_num}_{j}"
+                                )
+                        else:
+                            st.error(f"Could not generate Excel file for '{title}'.")
+
     st.markdown("---")
     st.success(f"**Analysis complete! Found a total of {total_tables_found} tables across the selected pages.**")
 
 if __name__ == "__main__":
     main()
-
-
