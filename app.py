@@ -215,8 +215,8 @@ def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
     return flat_headers
 
 def main():
-    st.title("📄 Intelligent Table Extractor Pro")
-    st.markdown("An AI agent that performs a forensic analysis of your documents to extract flawless tables.")
+    st.title("📄 Table Extractor using Gemini 2.5 Pro API")
+    st.markdown("An AI agent that performs a forensic analysis of documents to extract tables.")
 
     # --- Initialize Session State ---
     if "processor" not in st.session_state:
@@ -369,4 +369,5 @@ def display_results():
 
 if __name__ == "__main__":
     main()
+
 
