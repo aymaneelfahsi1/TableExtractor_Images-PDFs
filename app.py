@@ -38,8 +38,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 @dataclass
 class TableProcessorConfig:
     """Configuration for the advanced table processing agent."""
-    GOOGLE_API_KEY: str = st.secrets["GOOGLE_API_KEY"]
-    GEMINI_MODEL: str = "gemini-2.5-pro"
+    GOOGLE_API_KEY: str = "AIzaSyBuLjspfJ_u1xibj38a4iq1h1KnFI7BIJE"
+    GEMINI_MODEL: str = "gemini-1.5-pro-latest"
     OUTPUT_DIR: str = "bonus/extracted_tables"
 
 class SingleShotTableProcessor:
@@ -65,10 +65,9 @@ class SingleShotTableProcessor:
         """
         Processes an entire image using the final "Semantic Analyst" prompt.
         """
-        st.write("Analyzing image with the Semantic Analyst (Gemini)...")
         try:
             master_prompt = f"""
-            You are a world-class document forensics expert. Your primary goal is to perform a deep structural and semantic analysis of the document image, identifying all tables and their complete context, and structuring them into a flawless JSON list.
+            You are a meticulous document forensics expert. Your primary goal is to perform a structural analysis of the document image, identifying all tables and their complete hierarchical context, and structure them into a flawless JSON list.
 
             A user has provided a hint that they expect to find around **{table_hint}** table(s). Use this as a guide, but your own expert analysis is paramount.
 
@@ -171,13 +170,9 @@ class SingleShotTableProcessor:
                     cell.value = cell_data
                     cell.border, cell.font = cell_border, header_font
             
-            # --- FIX IS HERE: CODE IS NOW MORE ROBUST ---
             for instruction in instructions.get("formula_instructions", []):
-                # Safely get keys to prevent crashing if the AI makes a mistake
                 target_col_index = instruction.get("column_index")
                 formula_type = instruction.get("formula_type")
-
-                # Only proceed if the instruction is well-formed
                 if target_col_index is not None and formula_type == "SUM_ABOVE":
                     target_col = target_col_index + 1
                     col_letter = get_column_letter(target_col)
@@ -186,7 +181,6 @@ class SingleShotTableProcessor:
                     target_cell.value, target_cell.font = formula, header_font
                 else:
                     logging.warning(f"Skipping malformed formula instruction: {instruction}")
-            # --- END FIX ---
             
             for i in range(1, len(flat_headers) + 1):
                 max_len = max(len(str(cell.value or "")) for cell in ws[get_column_letter(i)])
@@ -199,15 +193,15 @@ class SingleShotTableProcessor:
             return None
 
 # --- Helper Functions & UI ---
-def convert_pdf_to_images(pdf_file):
+def convert_pdf_to_images(pdf_bytes):
     try:
-        return [Image.frombytes("RGB", [p.width, p.height], p.get_pixmap().samples) for p in fitz.open(stream=pdf_file.read(), filetype="pdf")]
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        return [Image.frombytes("RGB", [p.width, p.height], p.get_pixmap().samples) for p in pdf_document]
     except Exception as e:
         st.error(f"Failed to convert PDF: {e}")
         return []
 
 def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
-    """Creates a single list of unique, semantic column headers from a hierarchical structure."""
     flat_headers = []
     for header in column_structure:
         parent_name = header.get("name", "")
@@ -222,88 +216,156 @@ def flatten_hierarchical_headers(column_structure: List[Dict]) -> List[str]:
 
 def main():
     st.title("📄 Intelligent Table Extractor Pro")
-    st.markdown("A self-correcting AI agent that performs a forensic analysis of your documents to extract tables.")
+    st.markdown("An AI agent that performs a forensic analysis of your documents to extract flawless tables.")
 
+    # --- Initialize Session State ---
     if "processor" not in st.session_state:
-        st.session_state.processor = SingleShotTableProcessor()
+        try:
+            st.session_state.processor = SingleShotTableProcessor()
+        except Exception as e:
+            st.error("Failed to initialize the AI Processor. Is your API key set correctly in the code?")
+            st.stop()
     if "results" not in st.session_state:
         st.session_state.results = None
     if "images_to_display" not in st.session_state:
         st.session_state.images_to_display = None
+    if "page_configs" not in st.session_state:
+        st.session_state.page_configs = {}
 
+    # --- Sidebar for Configuration ---
     with st.sidebar:
         st.header("⚙️ Configuration")
         st.info("API key is hardcoded.")
         st.markdown("---")
+        
         uploaded_file = st.file_uploader("Upload a new Image or PDF to start", type=["jpg", "jpeg", "png", "pdf"])
-        table_hint = st.slider("Number of Tables Expected (Hint)", 1, 10, 1, 1)
         
-        col1, col2 = st.columns(2)
-        process_button = col1.button("🚀 Start Analysis", use_container_width=True)
-        if col2.button("Clear Results", use_container_width=True):
-            st.session_state.results, st.session_state.images_to_display = None, None
-            st.rerun()
-
-    if process_button and uploaded_file:
-        st.session_state.results, st.session_state.images_to_display = None, None
-        images_to_process = convert_pdf_to_images(uploaded_file) if uploaded_file.type == "application/pdf" else [Image.open(uploaded_file)]
-        st.session_state.images_to_display = images_to_process
-        
-        if images_to_process:
-            results_by_page = []
-            for img in images_to_process:
-                with st.spinner(f"AI is analyzing Page {images_to_process.index(img) + 1}..."):
-                    instructions = st.session_state.processor.extract_all_tables_in_one_shot(img, table_hint)
-                    results_by_page.append(instructions)
-            st.session_state.results = results_by_page
-            st.rerun()
-
-    if st.session_state.results:
-        st.markdown("---")
-        st.header("📊 Analysis Results")
-        total_tables_found = 0
-        for i, (img, page_results) in enumerate(zip(st.session_state.images_to_display, st.session_state.results)):
-            page_num = i + 1
-            st.subheader(f"📄 Page {page_num}")
+        # --- DYNAMIC UI FOR PDF PAGE SELECTION ---
+        selected_pages_indices = []
+        if uploaded_file and uploaded_file.type == "application/pdf":
+            with st.spinner("Reading PDF..."):
+                pdf_bytes = uploaded_file.getvalue()
+                pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                page_options = [f"Page {i+1}" for i in range(len(pdf_doc))]
             
-            col1, col2 = st.columns([1, 2])
-            col1.image(img, caption=f"Analyzed Page {page_num}", use_column_width=True)
+            selected_pages_str = st.multiselect(
+                "Select pages to process",
+                options=page_options,
+                default=page_options[0] if page_options else None
+            )
+            selected_pages_indices = [int(p.split(" ")[1]) - 1 for p in selected_pages_str]
 
+        # General hint slider, now used as a default
+        global_table_hint = st.slider("Default Table Hint (per page)", 1, 10, 1, 1, help="This will be the default hint for all selected pages.")
+        
+        if st.sidebar.button("Clear Results", use_container_width=True):
+            st.session_state.results, st.session_state.images_to_display, st.session_state.page_configs = None, None, {}
+            st.rerun()
+
+    # --- MAIN CONTENT AREA ---
+    # Step 1: Per-Page Configuration
+    if uploaded_file and uploaded_file.type == "application/pdf" and selected_pages_indices:
+        st.subheader("⚙️ Per-Page Configuration")
+        st.markdown("Set a specific table hint for each page you selected.")
+        
+        # Create a dictionary to hold the hints
+        page_configs = {}
+        for page_index in selected_pages_indices:
+            # Use columns for a cleaner layout
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.markdown(f"**Page {page_index + 1}**")
             with col2:
-                if not page_results:
-                    st.warning(f"No tables were found on Page {page_num}.")
-                    continue
+                # Use the global hint as the default value for each slider
+                hint = st.number_input(
+                    f"Table hint for page {page_index+1}",
+                    min_value=1,
+                    max_value=10,
+                    value=st.session_state.page_configs.get(page_index, global_table_hint),
+                    step=1,
+                    key=f"hint_{page_index}"
+                )
+                page_configs[page_index] = hint
+        
+        st.session_state.page_configs = page_configs
+        
+        if st.button("🚀 Start Analysis on Selected Pages", use_container_width=True):
+            process_file(uploaded_file, selected_pages_indices)
 
-                for j, table_instructions in enumerate(page_results):
-                    total_tables_found += 1
-                    title = table_instructions.get("table_title") or f"Table {j + 1}"
-                    st.markdown(f"#### {title}")
-                    
-                    column_structure = table_instructions.get("column_structure", [])
-                    data_rows = table_instructions.get("data_rows", [])
-                    summary_row = table_instructions.get("summary_row", [])
-                    
-                    flat_headers = flatten_hierarchical_headers(column_structure)
+    elif uploaded_file and uploaded_file.type != "application/pdf":
+         st.session_state.page_configs = {0: global_table_hint} # For single image, page index is 0
+         if st.button("🚀 Start Analysis", use_container_width=True):
+             process_file(uploaded_file, [0]) # Process page at index 0
 
-                    if flat_headers and (data_rows or summary_row):
-                        try:
-                            preview_data = data_rows + ([summary_row] if summary_row else [])
-                            df = pd.DataFrame(preview_data, columns=flat_headers)
-                            st.dataframe(df)
-                        except Exception as e:
-                            st.error(f"Could not display preview: {e}")
-                            st.json(table_instructions)
+    # Step 2: Display Results
+    if st.session_state.results:
+        display_results()
 
-                    output_filename = f"Page_{page_num}_Table_{j + 1}.xlsx"
-                    output_path = os.path.join(st.session_state.processor.config.OUTPUT_DIR, output_filename)
-                    saved_path = st.session_state.processor.create_excel_file(table_instructions, output_path, total_tables_found)
+def process_file(uploaded_file, selected_pages_indices):
+    """Handles the main processing logic when the button is clicked."""
+    st.session_state.results, st.session_state.images_to_display = None, None
+    all_images = convert_pdf_to_images(uploaded_file.getvalue()) if uploaded_file.type == "application/pdf" else [Image.open(uploaded_file)]
+    
+    if all_images:
+        images_to_process = [(idx, all_images[idx]) for idx in selected_pages_indices if idx < len(all_images)]
+        st.session_state.images_to_display = images_to_process
+    
+        results_by_page = {}
+        for page_index, img in images_to_process:
+            page_hint = st.session_state.page_configs.get(page_index, 1) # Get the specific hint for this page
+            with st.spinner(f"AI is analyzing Page {page_index + 1} with a hint of {page_hint} table(s)..."):
+                instructions = st.session_state.processor.extract_all_tables_in_one_shot(img, page_hint)
+                results_by_page[page_index] = instructions
+        st.session_state.results = results_by_page
+        st.rerun()
 
-                    if saved_path:
-                        with open(saved_path, "rb") as file:
-                            st.download_button(f"📥 Download {output_filename}", file, output_filename, key=f"dl_{i}_{j}")
-        st.markdown("---")
-        st.success(f"**Analysis complete! Found a total of {total_tables_found} tables.**")
+def display_results():
+    """Renders the results stored in the session state."""
+    st.markdown("---")
+    st.header("📊 Analysis Results")
+    total_tables_found = 0
+    
+    for page_index, img in st.session_state.images_to_display:
+        page_num = page_index + 1
+        page_results = st.session_state.results.get(page_index)
+
+        st.subheader(f"📄 Page {page_num}")
+        col1, col2 = st.columns([1, 2])
+        col1.image(img, caption=f"Analyzed Page {page_num}", use_column_width=True)
+
+        with col2:
+            if not page_results:
+                st.warning(f"No tables were found on Page {page_num}.")
+                continue
+
+            for j, table_instructions in enumerate(page_results):
+                total_tables_found += 1
+                title = table_instructions.get("table_title") or f"Table {j + 1}"
+                st.markdown(f"#### {title}")
+                
+                column_structure = table_instructions.get("column_structure", [])
+                data_rows = table_instructions.get("data_rows", [])
+                summary_row = table_instructions.get("summary_row", [])
+                flat_headers = flatten_hierarchical_headers(column_structure)
+
+                if flat_headers and (data_rows or summary_row):
+                    try:
+                        preview_data = data_rows + ([summary_row] if summary_row else [])
+                        df = pd.DataFrame(preview_data, columns=flat_headers)
+                        st.dataframe(df)
+                    except Exception as e:
+                        st.error(f"Could not display preview: {e}")
+                        st.json(table_instructions)
+
+                output_filename = f"Page_{page_num}_Table_{j + 1}.xlsx"
+                output_path = os.path.join(st.session_state.processor.config.OUTPUT_DIR, output_filename)
+                saved_path = st.session_state.processor.create_excel_file(table_instructions, output_path, total_tables_found)
+
+                if saved_path:
+                    with open(saved_path, "rb") as file:
+                        st.download_button(f"📥 Download {output_filename}", file, output_filename, key=f"dl_{page_num}_{j}")
+    st.markdown("---")
+    st.success(f"**Analysis complete! Found a total of {total_tables_found} tables across the selected pages.**")
 
 if __name__ == "__main__":
-
     main()
