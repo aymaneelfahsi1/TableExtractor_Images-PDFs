@@ -41,7 +41,7 @@ class TableProcessorConfig:
     """Configuration for the advanced table processing agent."""
     # This assumes you have a secrets.toml file with your GOOGLE_API_KEY
     GOOGLE_API_KEY: str = st.secrets.get("GOOGLE_API_KEY", "")
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-2.5-pro"
     OUTPUT_DIR: str = "extracted_tables"
 
 class SingleShotTableProcessor:
@@ -412,5 +412,6 @@ def display_results():
 
 if __name__ == "__main__":
     main()
+
 
 
