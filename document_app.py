@@ -1369,7 +1369,7 @@ def create_comprehensive_report(extracted_data: Dict, doc_type: str) -> str:
 def main():
     """Main function for the advanced document extraction app."""
     st.title("🔬 Document Data Extractor")
-    st.markdown("**ZERO-LOSS** document analysis with complete metadata extraction • Powered by Gemini API (Gemini 2.5 pro)")
+    st.markdown("**ZERO-LOSS** document analysis with complete metadata extraction • Powered by Gemini API")
     
     # Initialize session state
     if "forensic_processor" not in st.session_state:
