@@ -39,7 +39,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 @dataclass
 class TableProcessorConfig:
     """Configuration for the advanced table processing agent."""
-    GOOGLE_API_KEY: str = "AIzaSyDywLNoZ1iXg1eFQEBeFtk3ifaTE7ah3ys"
+    GOOGLE_API_KEY: str = st.secrets.get("GOOGLE_API_KEY", "")
     GEMINI_MODEL: str = "gemini-2.0-flash"
     OUTPUT_DIR: str = "extracted_tables"
 
