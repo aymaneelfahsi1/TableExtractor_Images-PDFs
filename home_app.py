@@ -59,7 +59,7 @@ def main():
         - Missing fields: Verify document type selection
         
         **Support:**
-        - Contact support@aiextractor.com for assistance
+        - Contact aymane.elfahsi1@gmail.com for assistance
         """)
     
     st.markdown("---")
